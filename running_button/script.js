@@ -1,102 +1,150 @@
-class Coord {
-    #x;
-    #y;
-    
-    get x() {
-        return this.#x;
-    }
-    
-    set x(value) {
-        this.#x = value;
-    }
+import { Coord, Dimension, Bound, Pointer } from './modules/engine.js'
 
-    get y() {
-        return this.#y;
-    }
-    
-    set y(value) {
-        this.#y = value;
-    }
+const FPS = 1000 / 60;
 
-    constructor(x, y) {
-        this.x = x;
-        this.y = y;
-    }
-}
-
-class Pointer {
-    #coord;
-
-    get coord() {
-        return this.#coord;
-    }
-
-    constructor(coord) {
-        this.#coord = coord;
-    }
-}
-
-class Runner {
-    #coord;
+class HtmlElement {
     #element;
 
     get element() {
         return this.#element;
     }
 
-    get coord() {
-        return this.#coord;
-    }
-
-    constructor(element, coord) {
+    constructor(element) {
         this.#element = element;
-        this.#coord = coord;
     }
 }
 
-function run(pointer, runner) {
-    const minimumDistancePixels = 200;
-    const distance = Math.sqrt(Math.pow(pointer.coord.x - runner.coord.x, 2) + Math.pow(pointer.coord.y - runner.coord.y, 2));
+class Runner extends HtmlElement {
+    #bound;
+    #isMoving;
 
-    if(distance < minimumDistancePixels) {
-        const sin = (runner.coord.y - pointer.coord.y) / distance;
-        const cos = (runner.coord.x - pointer.coord.x) / distance;
+    get bound() {
+        return this.#bound;
+    }
 
-        const displacement = 10;
+    constructor(element, bound) {
+        super(element);
 
-        return new Coord(runner.coord.x + cos * displacement, runner.coord.y + sin * displacement);
-    } else {
-        return runner.coord;
+        this.#bound = bound;
+
+        this.#isMoving = false;
+    }
+
+    update(container) {
+        const pointer = container.pointer;
+
+        const minimumDistancePixels = 400;
+        
+        const distance = Math.sqrt(Math.pow(pointer.coord.x - this.#bound.center.x, 2) + Math.pow(pointer.coord.y - this.#bound.center.y, 2));
+        const speed = 1000;
+        
+        if (distance < minimumDistancePixels) {
+            const sin = (this.#bound.center.y - pointer.coord.y) / distance;
+            const cos = (this.#bound.center.x - pointer.coord.x) / distance;
+
+            let x = this.#bound.coord.x + cos * speed * FPS / 1000;
+            let y = this.#bound.coord.y + sin * speed * FPS / 1000;
+
+            if(x < 0)
+                x = 0;
+            if(x + this.#bound.dimension.width > container.bound.coord.x + container.bound.dimension.width)
+                x = container.bound.coord.x + container.bound.dimension.width - this.#bound.dimension.width;
+            if(y < 0)
+                y = 0;
+            if(y + this.#bound.dimension.height > container.bound.coord.y + container.bound.dimension.height)
+                y = container.bound.coord.y + container.bound.dimension.height - this.#bound.dimension.height;
+
+            this.#bound.coord = new Coord(x, y);
+
+            this.draw();
+        }
+    }
+
+    draw() {
+        this.element.style.left = `${this.#bound.coord.x}px`;
+        this.element.style.top = `${this.#bound.coord.y}px`;
+    }
+}
+
+class Container extends HtmlElement {
+    #bound;
+    #pointer;
+    #runners;
+
+    get bound() {
+        return this.#bound;
+    }
+
+    set bound(value) {
+        this.#bound = value;
+    }
+
+    get pointer() {
+        return this.#pointer;
+    }
+
+    constructor(element, bound) {
+        super(element);
+
+        this.#bound = bound;
+        this.#pointer = new Pointer(new Coord(0, 0));
+        this.#runners = [];
+
+        this.#registerEvents();
+    }
+
+    handleMouseMove(e) {
+        this.#pointer.coord.x = e.clientX;
+        this.#pointer.coord.y = e.clientY;
+    }
+
+    addRunner(runner) {
+        this.#runners.push(runner);
+    }
+
+    generateRandomPoint() {
+        return new Coord(
+            Math.floor(Math.random() * this.#bound.dimension.width) + this.#bound.coord.x,
+            Math.floor(Math.random() * this.#bound.dimension.height) + this.#bound.coord.y,
+        );
+    }
+
+    update() {
+        this.#runners.forEach((runner) => { runner?.update(this); });
+    }
+
+    #registerEvents() {
+        this.element.addEventListener('mousemove', this.handleMouseMove.bind(this));
     }
 }
 
 function start() {
     const interactables = document.getElementsByClassName('interactable');
+
+    const containers = [];
+
     for (const interactable of interactables) {
+        const { x, y, width, height } = interactable.getBoundingClientRect();
+        const bound = new Bound(new Coord(x, y), new Dimension(width, height));
+
+        const container = new Container(interactable, bound);
+
         const fugitives = interactable.getElementsByClassName('fugitive');
-
         for (const fugitive of fugitives) {
-            fugitive.style.left = `${250}px`;
-            fugitive.style.top = `${250}px`;
+            const { x, y, width, height } = fugitive.getBoundingClientRect();
+
+            const runner = new Runner(fugitive, new Bound(container.generateRandomPoint(), new Dimension(width, height)));
+            container.addRunner(runner);
         }
-
-        interactable.addEventListener('mousemove', (e) => {
-            const fugitives = interactable.getElementsByClassName('fugitive');
-
-            for (const fugitive of fugitives) {
-                const { x, y } = fugitive.getBoundingClientRect();
-                
-                const runner = new Runner(fugitive, new Coord(x, y));
-                const pointer = new Pointer(new Coord(e.clientX, e.clientY));
-
-                const newCoords = run(pointer, runner);
-
-                fugitive.style.left = `${newCoords.x}px`;
-                fugitive.style.top = `${newCoords.y}px`;
-            }
-        });
-
+        
+        containers.push(container);
     }
+
+    setInterval(() => {
+        containers.forEach((container) => {
+            container.update();
+        });
+    }, 1000 / 60);
 }
 
 window.onload = start;
